@@ -38,6 +38,23 @@ async function run() {
       const result = await restaurant.insertOne(newFood);
       res.send(result);
     });
+
+    app.get("/allfoods", async (req, res) => {
+      const cursor = restaurant.find();
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/topfoods", (req, res) => {
+      const query = {}; // Optionally, add a query filter if needed
+      restaurant
+        .find(query) // Apply the query (currently empty, fetches all)
+        .sort({ count: -1 }) // Sort by 'count' in descending order
+        .limit(6) // Limit to the top 6
+        .toArray() // Convert the cursor to an array
+        .then((topFoods) => {
+          res.send(topFoods); // Send the top 6 items as a response
+        });
+    });
   } finally {
     // Ensures that the client will close when you finish/error
   }
