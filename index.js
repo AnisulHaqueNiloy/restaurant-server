@@ -3,11 +3,11 @@ const cors = require("cors");
 const app = express();
 require("dotenv").config();
 const port = process.env.PORT || 3000;
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 app.use(express.json());
 const corsOptions = {
-  origin: "http://localhost:5174", // Your frontend origin
+  origin: "http://localhost:5173", // Your frontend origin
   methods: "GET,POST,PUT,DELETE",
 };
 app.use(cors(corsOptions));
@@ -25,6 +25,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     const restaurant = client.db("Restaurant").collection("Foods");
+    const purchase = client.db("Restaurant").collection("Purchase");
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     // Send a ping to confirm a successful connection
@@ -54,6 +55,22 @@ async function run() {
         .then((topFoods) => {
           res.send(topFoods); // Send the top 6 items as a response
         });
+    });
+
+    // single product .............
+    app.get("/foods-detail/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await restaurant.findOne(query);
+      res.send(result);
+    });
+
+    // purchase ...........
+    app.post("/purchase/:id", async (req, res) => {
+      const purchaseItem = req.body;
+      purchase.date = Date.now(); // Automatically add purchase date
+      const result = await purchase.insertOne(purchaseItem);
+      res.send(result);
     });
   } finally {
     // Ensures that the client will close when you finish/error
