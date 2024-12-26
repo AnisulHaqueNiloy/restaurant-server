@@ -41,7 +41,26 @@ async function run() {
     });
 
     app.get("/allfoods", async (req, res) => {
-      const cursor = restaurant.find();
+      const email = req.query.email;
+      let query = {};
+      if (email) {
+        query = { "AddBy.Email": email };
+        console.log(query);
+      }
+
+      const cursor = restaurant.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/purchase", async (req, res) => {
+      const email = req.query.email;
+      let query = {};
+      if (email) {
+        query = { buyerEmail: email };
+        console.log(query);
+      }
+
+      const cursor = purchase.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
@@ -49,7 +68,7 @@ async function run() {
       const query = {}; // Optionally, add a query filter if needed
       restaurant
         .find(query) // Apply the query (currently empty, fetches all)
-        .sort({ count: -1 }) // Sort by 'count' in descending order
+        .sort({ Count: -1 }) // Sort by 'count' in descending order
         .limit(6) // Limit to the top 6
         .toArray() // Convert the cursor to an array
         .then((topFoods) => {
@@ -65,11 +84,142 @@ async function run() {
       res.send(result);
     });
 
+    // update...........
+
+    app.put("/update/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const data = req.body;
+
+      const {
+        img,
+        name,
+        category,
+        quantity,
+        price,
+        origin,
+        username,
+        email,
+        description,
+      } = data;
+
+      const updated = {
+        $set: {
+          FoodImage: img,
+          FoodName: name,
+          Category: category,
+          Description: description,
+          Price: price,
+          FoodOrigin: origin,
+          Quantity: quantity,
+          AddBy: {
+            Name: username,
+            Email: email,
+          },
+        },
+      };
+
+      try {
+        const result = await restaurant.updateOne(filter, updated);
+
+        // Return only relevant information for the frontend
+        res.send({ modifiedCount: result.modifiedCount });
+      } catch (error) {
+        console.error("Error updating the document:", error);
+        res.status(500).send({ error: "Failed to update the document" });
+      }
+    });
+
     // purchase ...........
+
     app.post("/purchase/:id", async (req, res) => {
+      const foodId = req.params.id;
       const purchaseItem = req.body;
-      purchase.date = Date.now(); // Automatically add purchase date
-      const result = await purchase.insertOne(purchaseItem);
+
+      try {
+        // Find the food item by ID
+        const food = await restaurant.findOne({ _id: new ObjectId(foodId) });
+
+        if (!food) {
+          return res.status(404).send({ message: "Food item not found." });
+        }
+
+        // Check if the item is out of stock
+        if (food.Quantity == 0) {
+          return res
+            .status(400)
+            .send({ message: "This item is out of stock." });
+        }
+
+        // Check if the buyer is trying to purchase their own added food item
+        if (food.AddedBy === purchaseItem.buyerEmail) {
+          return res
+            .status(400)
+            .send({ message: "You cannot purchase your own added food item." });
+        }
+
+        // Check if the requested quantity exceeds the available quantity
+        if (purchaseItem.quantity > food.Quantity) {
+          return res.status(400).send({
+            message: `Requested quantity exceeds available stock (${food.Quantity}).`,
+          });
+        }
+
+        // Calculate the updated quantity
+        const updatedQuantity = food.Quantity - purchaseItem.quantity;
+
+        // Update the available quantity and increment the count in the database
+        await restaurant.updateOne(
+          { _id: new ObjectId(foodId) },
+          {
+            $set: { Quantity: updatedQuantity },
+            $inc: { Count: 1 }, // Increment the Count field by 1
+          }
+        );
+
+        // Add the purchase record
+
+        purchaseItem.purchaseDate = Date.now(); // Automatically add purchase date
+        const purchaseResult = await purchase.insertOne(purchaseItem);
+
+        res.status(201).send({
+          message: "Purchase successful!",
+          purchaseResult,
+          updatedQuantity,
+        });
+      } catch (error) {
+        console.error("Error during purchase:", error);
+        res.status(500).send({
+          message: "Something went wrong. Please try again later.",
+        });
+      }
+    });
+
+    // search ..........
+    app.get("/search-foods", async (req, res) => {
+      const search = req.query.search || ""; // Get the search query from the URL
+      const query = {
+        $or: [
+          { FoodName: { $regex: search, $options: "i" } }, // Case-insensitive search in FoodName
+          { Category: { $regex: search, $options: "i" } }, // Case-insensitive search in Category
+          { FoodOrigin: { $regex: search, $options: "i" } }, // Case-insensitive search in FoodOrigin
+        ],
+      };
+
+      try {
+        const foods = await restaurant.find(query).toArray(); // Fetch matching foods
+        res.send(foods); // Send the results to the client
+      } catch (error) {
+        console.error("Error while searching for foods:", error);
+        res.status(500).send({ error: "Failed to search for foods" });
+      }
+    });
+
+    // delete..........
+    app.delete("/foods-delete/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await purchase.deleteOne(query);
       res.send(result);
     });
   } finally {
