@@ -1,14 +1,14 @@
 const express = require("express");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const cookieParser = require("cookie-parser");
-require("dotenv").config();
-
 const app = express();
+require("dotenv").config();
 const port = process.env.PORT || 3000;
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 app.use(express.json());
+
 app.use(
   cors({
     origin: [
@@ -20,30 +20,24 @@ app.use(
 );
 app.use(cookieParser());
 
-// Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
   const token = req.cookies?.token;
+  console.log(token);
   if (!token) {
-    return res
-      .status(401)
-      .send({ success: false, message: "Unauthorized access" });
+    return res.status(401).send({ message: "unauthorized access1" });
   }
 
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      return res
-        .status(401)
-        .send({ success: false, message: "Unauthorized access" });
+      return res.status(401).send({ message: "unauthorized access2" });
     }
     req.user = decoded;
     next();
   });
 };
-
-// MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.3zxuw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-// MongoDB Client
+// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -54,29 +48,31 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect to MongoDB
-    await client.connect();
-
     const restaurant = client.db("Restaurant").collection("Foods");
     const purchase = client.db("Restaurant").collection("Purchase");
+    // Connect the client to the server	(optional starting in v4.7)
+    // await client.connect();
+    // // Send a ping to confirm a successful connection
+    // await client.db("admin").command({ ping: 1 });
+    // console.log(
+    //   "Pinged your deployment. You successfully connected to MongoDB!"
+    // );
 
-    // Generate JWT token
     app.post("/token", (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: "1h",
       });
-
+      console.log("Generated Token: ", token);
       res
         .cookie("token", token, {
           httpOnly: true,
           secure: process.env.NODE_ENV === "production",
           sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
         })
-        .send({ success: true, token });
+        .send({ success: true });
     });
 
-    // Logout user
     app.post("/logout", (req, res) => {
       res
         .clearCookie("token", {
@@ -84,192 +80,219 @@ async function run() {
           secure: process.env.NODE_ENV === "production",
           sameSite: process.env.NODE_ENV === "production" ? "none" : "strict",
         })
-        .send({ success: true, message: "Logged out successfully" });
+        .send({ success: true });
     });
 
-    // Add new food item
     app.post("/foods", async (req, res) => {
-      try {
-        const newFood = req.body;
-        const result = await restaurant.insertOne(newFood);
-        res.status(201).send({ success: true, data: result });
-      } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to add food item" });
-      }
+      const newFood = req.body;
+      const result = await restaurant.insertOne(newFood);
+      res.send(result);
     });
 
-    // Get all foods or filter by email
     app.get("/allfoods", async (req, res) => {
       const email = req.query.email;
-      const query = email ? { "AddBy.Email": email } : {};
-
-      try {
-        const result = await restaurant.find(query).toArray();
-        res.send({ success: true, data: result });
-      } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to fetch foods" });
+      let query = {};
+      if (email) {
+        query = { "AddBy.Email": email };
       }
-    });
+      // console.log(req.cookies?.token);
 
-    // Get foods added by a logged-in user
+      const cursor = restaurant.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
     app.get("/myfoods", verifyToken, async (req, res) => {
       const email = req.query.email;
+      let query = { "AddBy.Email": email };
 
-      if (req.user.email !== email) {
-        return res.status(403).send({ success: false, message: "Forbidden" });
+      if (req?.user?.email !== email) {
+        return res.status(403).send({ message: "forbidden" });
       }
 
-      try {
-        const result = await restaurant
-          .find({ "AddBy.Email": email })
-          .toArray();
-        res.send({ success: true, data: result });
-      } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to fetch foods" });
-      }
+      const cursor = restaurant.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
     });
 
-    // Get food details by ID
+    app.get("/purchase", verifyToken, async (req, res) => {
+      const email = req.query.email;
+      let query = {};
+      if (email) {
+        query = { buyerEmail: email };
+      }
+      if (req.user.email !== req.query.email) {
+        return res.status(403).send({ message: "forbidden" });
+      }
+
+      const cursor = purchase.find(query);
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+    app.get("/topfoods", (req, res) => {
+      const query = {}; // Optionally, add a query filter if needed
+      restaurant
+        .find(query) // Apply the query (currently empty, fetches all)
+        .sort({ Count: -1 }) // Sort by 'count' in descending order
+        .limit(6) // Limit to the top 6
+        .toArray() // Convert the cursor to an array
+        .then((topFoods) => {
+          res.send(topFoods); // Send the top 6 items as a response
+        });
+    });
+
+    // single product .............
     app.get("/foods-detail/:id", async (req, res) => {
       const id = req.params.id;
-
-      try {
-        const result = await restaurant.findOne({ _id: new ObjectId(id) });
-        res.send({ success: true, data: result });
-      } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to fetch food details" });
-      }
+      const query = { _id: new ObjectId(id) };
+      const result = await restaurant.findOne(query);
+      res.send(result);
     });
 
-    // Update food item
+    // update...........
+
     app.put("/update/:id", async (req, res) => {
       const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
       const data = req.body;
+
+      const {
+        img,
+        name,
+        category,
+        quantity,
+        price,
+        origin,
+        username,
+        email,
+        description,
+      } = data;
 
       const updated = {
         $set: {
-          FoodImage: data.img,
-          FoodName: data.name,
-          Category: data.category,
-          Description: data.description,
-          Price: data.price,
-          FoodOrigin: data.origin,
-          Quantity: data.quantity,
+          FoodImage: img,
+          FoodName: name,
+          Category: category,
+          Description: description,
+          Price: price,
+          FoodOrigin: origin,
+          Quantity: quantity,
           AddBy: {
-            Name: data.username,
-            Email: data.email,
+            Name: username,
+            Email: email,
           },
         },
       };
 
       try {
-        const result = await restaurant.updateOne(
-          { _id: new ObjectId(id) },
-          updated
-        );
-        res.send({ success: true, modifiedCount: result.modifiedCount });
+        const result = await restaurant.updateOne(filter, updated);
+
+        // Return only relevant information for the frontend
+        res.send({ modifiedCount: result.modifiedCount });
       } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to update food item" });
+        console.error("Error updating the document:", error);
+        res.status(500).send({ error: "Failed to update the document" });
       }
     });
 
-    // Purchase food item
+    // purchase ...........
+
     app.post("/purchase/:id", async (req, res) => {
       const foodId = req.params.id;
       const purchaseItem = req.body;
 
       try {
+        // Find the food item by ID
         const food = await restaurant.findOne({ _id: new ObjectId(foodId) });
 
         if (!food) {
-          return res
-            .status(404)
-            .send({ success: false, message: "Food item not found" });
+          return res.status(404).send({ message: "Food item not found." });
         }
 
-        if (food.Quantity < purchaseItem.quantity) {
+        // Check if the item is out of stock
+        if (food.Quantity == 0) {
+          return res
+            .status(400)
+            .send({ message: "This item is out of stock." });
+        }
+
+        // Check if the buyer is trying to purchase their own added food item
+        if (food.AddedBy === purchaseItem.buyerEmail) {
+          return res
+            .status(400)
+            .send({ message: "You cannot purchase your own added food item." });
+        }
+
+        // Check if the requested quantity exceeds the available quantity
+        if (purchaseItem.quantity > food.Quantity) {
           return res.status(400).send({
-            success: false,
-            message: `Requested quantity exceeds available stock (${food.Quantity}).`,
+            message: `Requested quantity exceeds available stock (${food.Quantity})`,
           });
         }
 
+        // Calculate the updated quantity
         const updatedQuantity = food.Quantity - purchaseItem.quantity;
 
+        // Update the available quantity and increment the count in the database
         await restaurant.updateOne(
           { _id: new ObjectId(foodId) },
-          { $set: { Quantity: updatedQuantity }, $inc: { Count: 1 } }
+          {
+            $set: { Quantity: updatedQuantity },
+            $inc: { Count: 1 }, // Increment the Count field by 1
+          }
         );
 
-        purchaseItem.purchaseDate = new Date();
+        // Add the purchase record
+
+        purchaseItem.purchaseDate = Date.now(); // Automatically add purchase date
         const purchaseResult = await purchase.insertOne(purchaseItem);
 
-        res
-          .status(201)
-          .send({ success: true, purchaseResult, updatedQuantity });
+        res.status(201).send({
+          message: "Purchase successful!",
+          purchaseResult,
+          updatedQuantity,
+        });
       } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to complete purchase" });
+        res.status(500).send({
+          message: "Something went wrong. Please try again later.",
+        });
       }
     });
 
-    // Search for foods
+    // search ..........
     app.get("/search-foods", async (req, res) => {
-      const search = req.query.search || "";
+      const search = req.query.search || ""; // Get the search query from the URL
       const query = {
         $or: [
-          { FoodName: { $regex: search, $options: "i" } },
-          { Category: { $regex: search, $options: "i" } },
-          { FoodOrigin: { $regex: search, $options: "i" } },
+          { FoodName: { $regex: search, $options: "i" } }, // Case-insensitive search in FoodName
+          { Category: { $regex: search, $options: "i" } }, // Case-insensitive search in Category
+          { FoodOrigin: { $regex: search, $options: "i" } }, // Case-insensitive search in FoodOrigin
         ],
       };
 
       try {
-        const result = await restaurant.find(query).toArray();
-        res.send({ success: true, data: result });
+        const foods = await restaurant.find(query).toArray(); // Fetch matching foods
+        res.send(foods); // Send the results to the client
       } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to search for foods" });
+        console.error("Error while searching for foods:", error);
+        res.status(500).send({ error: "Failed to search for foods" });
       }
     });
 
-    // Delete food item
+    // delete..........
     app.delete("/foods-delete/:id", async (req, res) => {
       const id = req.params.id;
-
-      try {
-        const result = await restaurant.deleteOne({ _id: new ObjectId(id) });
-        res.send({ success: true, deletedCount: result.deletedCount });
-      } catch (error) {
-        res
-          .status(500)
-          .send({ success: false, message: "Failed to delete food item" });
-      }
+      const query = { _id: new ObjectId(id) };
+      const result = await purchase.deleteOne(query);
+      res.send(result);
     });
   } finally {
-    // Ensures the client will close when finished or an error occurs
+    // Ensures that the client will close when you finish/error
   }
 }
-run().catch((error) => console.error("Error connecting to database:", error));
+run().catch(console.dir);
 
-// Root route
 app.get("/", (req, res) => {
-  res.send("Restaurant server is running");
+  res.send("restaurant server");
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+app.listen(port, () => {});
